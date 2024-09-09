@@ -1,8 +1,5 @@
 import numpy as np
 
-import numpy as np
-
-
 class Strategy:
     def __init__(self, stock_allocation=0.6, bond_allocation=0.4):
         """
