@@ -27,6 +27,43 @@ def compute_total_interest_from_apr(apr, loan_principal, loan_term_months, fees=
     total_interest = apr * (loan_principal * loan_term_months / 12) - fees
     return total_interest
 
+# Function to compute APR (accounting for compound interest) from total interest, fees, loan principal, and loan term in months
+def compute_apr_from_interest_compound(total_interest, loan_principal, loan_term_months, fees=0):
+    total_loan = loan_principal + total_interest + fees
+    # Compute monthly payment from total loan amount
+    monthly_payment = total_loan / loan_term_months
+
+    # Use the formula to solve for the monthly interest rate
+    def pmt(rate, nper, pv):
+        return (rate * pv) / (1 - (1 + rate) ** -nper)
+
+    # Binary search to find the monthly interest rate that gives the correct payment
+    low, high = 0, 1  # reasonable range for monthly rate
+    for _ in range(100):  # iteratively narrow the search range
+        r = (low + high) / 2
+        computed_payment = pmt(r, loan_term_months, loan_principal)
+        if computed_payment < monthly_payment:
+            low = r
+        else:
+            high = r
+
+    apr = r * 12  # Convert monthly rate to APR
+    return apr
+
+
+# Function to compute total interest (accounting for compound interest) based on APR, fees, loan principal, and loan term in months
+def compute_total_interest_from_apr_compound(apr, loan_principal, loan_term_months, fees=0):
+    monthly_rate = apr / 12  # Convert APR to monthly rate
+    # Use the formula to compute the monthly payment
+    monthly_payment = (monthly_rate * loan_principal) / (
+        1 - (1 + monthly_rate) ** -loan_term_months
+    )
+    # Compute the total amount paid over the loan term
+    total_paid = monthly_payment * loan_term_months
+    # Compute total interest as the difference between total paid and loan principal
+    total_interest = total_paid - loan_principal + fees
+    return total_interest
+
 
 # Set the page configuration to wide mode
 st.set_page_config(layout="wide")
@@ -72,29 +109,45 @@ loan_principal = st.sidebar.number_input("Loan Principal", value=10000)
 loan_term_months = st.sidebar.number_input("Loan Term (Months)", value=120)
 
 # The user provides either the total interest or the APR
+compound_interest = st.sidebar.checkbox("Compound Interest?")
 total_interest_provided = st.sidebar.checkbox("Provide Total Interest?")
+pct = 2.154
+amount = 2154.00
+
 if total_interest_provided:
     total_interest_paid = st.sidebar.number_input(
         "Total Interest Paid on Loan",
-        value=2154.00,
+        value=amount,
         format="%.2f",
         help="Total interest paid over the loan term",
     )
-    apr = compute_apr_from_interest(
-        total_interest_paid, loan_principal, loan_term_months
-    )
+    amount = total_interest_paid
+    if compound_interest:
+        apr = compute_apr_from_interest_compound(
+            total_interest_paid, loan_principal, loan_term_months
+        )
+    else:
+        apr = compute_apr_from_interest(
+            total_interest_paid, loan_principal, loan_term_months
+        )
     st.sidebar.write(f"Computed APR: {apr*100:.2f}%")
 else:
     apr = st.sidebar.number_input(
         "Loan APR %",
-        value=2.154,
+        value=pct,
         format="%.2f",
         help="Annual Percentage Rate in percentage",
     )
+    pct = apr
     apr *= 0.01  # Convert to decimal
-    total_interest_paid = compute_total_interest_from_apr(
-        apr, loan_principal, loan_term_months
-    )
+    if compound_interest:
+        total_interest_paid = compute_total_interest_from_apr_compound(
+            apr, loan_principal, loan_term_months
+        )
+    else:
+        total_interest_paid = compute_total_interest_from_apr(
+            apr, loan_principal, loan_term_months
+        )
     st.sidebar.write(f"Computed Total Interest: {total_interest_paid:.2f}")
 
 import streamlit as st

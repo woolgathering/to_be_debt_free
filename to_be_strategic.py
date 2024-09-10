@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class Strategy:
     def __init__(self, stock_allocation=0.6, bond_allocation=0.4):
         """
@@ -16,7 +17,7 @@ class Strategy:
         """
         raise NotImplementedError("Subclasses should implement this method")
 
-    def rebalance(self, stock_prices, bond_prices, portfolio_value, time_index):
+    def rebalance(self, stock_prices, bond_prices, portfolio_values, time_index):
         """
         Rebalance the portfolio based on the given portfolio value at a specific time index.
         :param stock_prices: Price series for stocks.
@@ -26,12 +27,12 @@ class Strategy:
         :return: Updated stock and bond holdings after rebalancing.
         """
         # Recalculate stock and bond holdings based on the portfolio value and allocations
-        stock_holdings = (self.stock_allocation * portfolio_value) / stock_prices[
-            time_index
-        ]
-        bond_holdings = (self.bond_allocation * portfolio_value) / bond_prices[
-            time_index
-        ]
+        stock_holdings = (
+            self.stock_allocation * portfolio_values[time_index]
+        ) / stock_prices[time_index]
+        bond_holdings = (
+            self.bond_allocation * portfolio_values[time_index]
+            ) / bond_prices[time_index]
 
         return stock_holdings, bond_holdings
 
@@ -118,13 +119,16 @@ class BuyAndHoldStrategy(Strategy):
 
             # Perform rebalancing if it's time based on the rebalance frequency
             if self.rebalance_frequency > 0 and t % self.rebalance_frequency == 0:
-                total_portfolio_value = portfolio_values[t]
-                stock_holdings = (
-                    self.stock_allocation * total_portfolio_value
-                ) / stock_prices[t]
-                bond_holdings = (
-                    self.bond_allocation * total_portfolio_value
-                ) / bond_prices[t]
+                stock_holdings, bond_holdings = self.rebalance(
+                    stock_prices, bond_prices, portfolio_values, t
+                )
+                # total_portfolio_value = portfolio_values[t]
+                # stock_holdings = (
+                #     self.stock_allocation * total_portfolio_value
+                # ) / stock_prices[t]
+                # bond_holdings = (
+                #     self.bond_allocation * total_portfolio_value
+                # ) / bond_prices[t]
 
             # Apply drawdown if it's time
             if drawdown_frequency > 0 and t % drawdown_frequency == 0:
@@ -218,13 +222,9 @@ class HedgeFundieStrategy(Strategy):
 
             # Perform rebalancing if it's time based on the rebalance frequency
             if self.rebalance_frequency > 0 and t % self.rebalance_frequency == 0:
-                total_portfolio_value = portfolio_values[t]
-                stock_holdings = (
-                    self.stock_allocation * total_portfolio_value
-                ) / leveraged_stock_prices[t]
-                bond_holdings = (
-                    self.bond_allocation * total_portfolio_value
-                ) / leveraged_bond_prices[t]
+                stock_holdings, bond_holdings = self.rebalance(
+                    leveraged_stock_prices, leveraged_bond_prices, portfolio_values, t
+                )
 
             # Apply drawdown if it's time
             if drawdown_frequency > 0 and t % drawdown_frequency == 0:
