@@ -9,11 +9,12 @@ from to_be_debt_free_or_not_to_be import (
     JumpDiffusionModel,
     AutocorrelationModel,
     CompoundInterestModel,
-)  # Import your classes
+)
 from to_be_strategic import (
     BuyAndHoldStrategy,
     HedgeFundieStrategy,
-)  # Import your strategy class
+    ShannonsDemonStrategy,
+)
 
 
 # Function to compute APR based on total interest, fees, loan principal, and loan term in months
@@ -27,8 +28,11 @@ def compute_total_interest_from_apr(apr, loan_principal, loan_term_months, fees=
     total_interest = apr * (loan_principal * loan_term_months / 12) - fees
     return total_interest
 
+
 # Function to compute APR (accounting for compound interest) from total interest, fees, loan principal, and loan term in months
-def compute_apr_from_interest_compound(total_interest, loan_principal, loan_term_months, fees=0):
+def compute_apr_from_interest_compound(
+    total_interest, loan_principal, loan_term_months, fees=0
+):
     total_loan = loan_principal + total_interest + fees
     # Compute monthly payment from total loan amount
     monthly_payment = total_loan / loan_term_months
@@ -52,7 +56,9 @@ def compute_apr_from_interest_compound(total_interest, loan_principal, loan_term
 
 
 # Function to compute total interest (accounting for compound interest) based on APR, fees, loan principal, and loan term in months
-def compute_total_interest_from_apr_compound(apr, loan_principal, loan_term_months, fees=0):
+def compute_total_interest_from_apr_compound(
+    apr, loan_principal, loan_term_months, fees=0
+):
     monthly_rate = apr / 12  # Convert APR to monthly rate
     # Use the formula to compute the monthly payment
     monthly_payment = (monthly_rate * loan_principal) / (
@@ -315,7 +321,9 @@ num_simulations = st.sidebar.slider(
 )
 N = loan_term_months  # Set time steps based on loan term
 
-strategy_name = st.sidebar.selectbox("Select Strategy", ["Buy and Hold", "HedgeFundie"])
+strategy_name = st.sidebar.selectbox(
+    "Select Strategy", ["Buy and Hold", "HedgeFundie", "Shannon's Demon"]
+)
 
 if strategy_name == "Buy and Hold":
     stock_allocation = st.sidebar.slider(
@@ -361,6 +369,122 @@ elif strategy_name == "HedgeFundie":
         rebalance_frequency=rebalance_frequency,
     )
 
+elif strategy_name == "Shannon's Demon":
+    ewma_decay = None
+    external_volatility = None
+    initial_volatility = None
+    volatility_window = None
+    volatility_change_threshold = None
+
+    stock_allocation = st.sidebar.slider(
+        "Stock Allocation (%)", min_value=0, max_value=100, value=60
+    )
+    bond_allocation = 100 - stock_allocation
+
+    rebalance_style = st.sidebar.selectbox(
+        "Rebalance Style",
+        ["Static", "Dynamic"],
+        help="Static rebalancing means rebalancing at fixed intervals, while dynamic rebalancing rebalances based on volatility changes.",
+    )
+    if rebalance_style == "Static":
+        rebalance_frequency = st.sidebar.slider(
+            "Rebalance Frequency (Months)",
+            min_value=0,
+            max_value=60,
+            value=0,
+            help="0 means no rebalancing",
+        )
+    else:
+        rebalance_frequency = -1  # this gets interpreted as dynamic rebalancing
+        volatility_change_threshold = st.sidebar.number_input(
+            "Volatility Change Threshold (%)",
+            value=5.0,
+            format="%.2f",
+            help="Threshold for dynamic rebalancing (e.g., 5%)",
+        )
+
+    risk_free_rate = st.sidebar.number_input(
+        "Risk-Free Rate (%)",
+        value=1.0,
+        format="%.2f",
+        help="Risk-free rate (for bonds)",
+    )
+    volatility_estimation_method = st.sidebar.selectbox(
+        "Volatility Estimation Method",
+        ["Rolling", "EWMA", "External"],
+        help="Method to estimate volatility for dynamic rebalancing",
+    )
+    if volatility_estimation_method == "EWMA":
+        volatility_estimation_method = "ewma"
+        initial_volatility = st.sidebar.number_input(
+            "Initial Volatility (%)",
+            value=15.0,
+            format="%.2f",
+            help="Initial volatility estimate (e.g., 15%)",
+        )
+        ewma_decay = st.sidebar.number_input(
+            "EWMA Decay Factor",
+            value=0.94,
+            format="%.2f",
+            help="Decay factor for EWMA (e.g., 0.94)",
+        )
+        volatility_window = st.sidebar.slider(
+            "Volatility Window (Months)",
+            min_value=1,
+            max_value=60,
+            value=12,
+            help="Number of periods to calculate EWMA",
+        )
+    elif volatility_estimation_method == "External":
+        volatility_estimation_method = "external"
+        external_volatility = st.sidebar.number_input(
+            "External Volatility (%)",
+            value=15.0,
+            format="%.2f",
+            help="User-provided volatility estimate",
+        )
+    elif volatility_estimation_method == "Rolling":
+        volatility_estimation_method = "rolling"
+        initial_volatility = st.sidebar.number_input(
+            "Initial Volatility (%)",
+            value=15.0,
+            format="%.2f",
+            help="Initial volatility estimate (e.g., 15%)",
+        )
+        volatility_window = st.sidebar.slider(
+            "Volatility Window (Months)",
+            min_value=1,
+            max_value=60,
+            value=12,
+            help="Number of periods to calculate rolling volatility",
+        )
+
+    if not bool(rebalance_frequency):
+        volatility_change_threshold = st.sidebar.number_input(
+            "Volatility Change Threshold (%)",
+            value=5.0,
+            format="%.2f",
+            help="Threshold for dynamic rebalancing (e.g., 5%)",
+        )
+
+    strategy = ShannonsDemonStrategy(
+        stock_allocation=stock_allocation / 100,
+        bond_allocation=bond_allocation / 100,
+        rebalance_frequency=rebalance_frequency,
+        volatility_window=volatility_window,  # Number of periods to calculate rolling volatility
+        risk_free_rate=risk_free_rate / 100,  # Risk-free rate (for bonds)
+        volatility_estimation_method=volatility_estimation_method,  # 'rolling', 'ewma', or 'external'
+        ewma_decay=ewma_decay,  # Decay factor for EWMA, 0.94
+        external_volatility=external_volatility,  # User-provided volatility estimates
+        initial_volatility=initial_volatility
+        / 100,  # Initial volatility estimate (e.g., 15%)
+        dynamic_rebalancing=not (
+            bool(rebalance_frequency)
+        ),  # Flag to switch between constant and dynamic rebalancing
+        volatility_change_threshold=volatility_change_threshold,  # Threshold for dynamic rebalancing (e.g., 5%)
+    )
+
+
 # allow drawdowns or additions
 st.sidebar.header("Monthly Drawdown/Contribution")
 enable_drawdown = st.sidebar.checkbox("Enable Drawdown/Contribution")
@@ -400,10 +524,7 @@ mc_simulator = MonteCarloSim(
 # Run the simulation for both stock and bond price series
 stock_prices, bond_prices = mc_simulator.simulate_paths()
 
-# Choose a strategy
-# strategy = BuyAndHoldStrategy(stock_allocation=1, bond_allocation=0)
-
-# Apply the strategy and get the strategy paths and instantaneous return
+# Apply the strategies and get the strategy paths and instantaneous return
 paths, instantaneous_return = mc_simulator.apply_strategy(
     strategy,
     stock_prices,
@@ -420,7 +541,7 @@ st.header("Simulation Results")
 results_fig = mc_simulator.plot_results(
     paths, instantaneous_return, show_distribution=True
 )
-st.plotly_chart(results_fig)
+st.plotly_chart(results_fig, use_container_width=True)
 
 # Option to show price series
 if st.checkbox("Show Price Series", value=True):
@@ -428,25 +549,144 @@ if st.checkbox("Show Price Series", value=True):
         "Number of Price Series to Display", min_value=1, max_value=20, value=5
     )
     price_series_fig = mc_simulator.plot_price_series(num_series=num_series)
-    st.plotly_chart(price_series_fig)
+    st.plotly_chart(price_series_fig, use_container_width=True)
 
 # Option to show terminal distribution
 if st.checkbox("Show Terminal Distribution", value=True):
     terminal_dist_fig = mc_simulator.plot_terminal_distribution(show_principal=True)
-    st.plotly_chart(terminal_dist_fig)
+    st.plotly_chart(terminal_dist_fig, use_container_width=True)
 
 # Option to show volatility series (if Heston Model)
-if st.checkbox("Show Volatility Series") and isinstance(model, HestonModel):
+if st.checkbox("Show Volatility Series") and (
+    isinstance(stock_model_instance, HestonModel)
+    or isinstance(bond_model_instance, HestonModel)
+):
     num_vol_series = st.slider(
         "Number of Volatility Series to Display", min_value=1, max_value=20, value=5
     )
-    stock_vol_series_fig = mc_simulator.plot_stock_volatility(num_series=num_vol_series)
-    bond_vol_series_fig = mc_simulator.plot_bond_volatility(num_series=num_vol_series)
-    st.plotly_chart(stock_vol_series_fig)
-    st.plotly_chart(bond_vol_series_fig)
+    if isinstance(stock_model_instance, HestonModel):
+        stock_vol_series_fig = mc_simulator.plot_stock_volatility(
+            num_series=num_vol_series
+        )
+        stock_vol_series_fig.update_layout(title="Stock Volatility Series")
+        st.plotly_chart(stock_vol_series_fig, use_container_width=True)
+    if isinstance(bond_model_instance, HestonModel):
+        bond_vol_series_fig = mc_simulator.plot_bond_volatility(
+            num_series=num_vol_series
+        )
+        bond_vol_series_fig.update_layout(title="Bond Volatility Series")
+        st.plotly_chart(bond_vol_series_fig, use_container_width=True)
 
 # Option to show utility comparison
 if st.checkbox("Show Utility Comparison"):
-    terminal_values = mc_simulator.price_series[-1, :]  # Get terminal values
-    utility_fig = mc_simulator.plot_utility_comparison(terminal_values)
-    st.plotly_chart(utility_fig)
+    with st.expander("About the Utility Functions"):
+        st.markdown(
+            """
+        The utility functions in these charts measure the **relative satisfaction** derived from different levels of terminal wealth, providing a way to evaluate the **risk-reward trade-offs** inherent in each investment strategy. Each function normalizes wealth performance against expected outcomes to better understand how different strategies cater to various risk preferences.
+
+        The utility of these utility functions is experimental and perhaps the least useful of the visualizations. The utility functions are as follows:
+
+        #### Quadratic Utility:
+        The quadratic utility function introduces a penalty for larger losses and is represented as:
+
+        $$ U(W) = W - \\frac{\\alpha}{2} W^2 $$
+
+        where:
+        - $$W$$ is the wealth at a given time step,
+        - $$\\alpha$$ is a risk-aversion parameter derived from the investor’s **maximum tolerable loss** (e.g., a 10% loss tolerance leads to $$\\alpha = 20$$.
+
+        This utility penalizes extreme negative outcomes, meaning that **larger losses lead to much lower utility**, while the potential for higher returns is capped by the risk taken.
+
+        #### Logarithmic Utility:
+        The logarithmic utility function is often used to represent the preferences of **risk-averse** investors. It is computed as:
+
+        $$ U(W) = s * \\log(W) $$
+
+        where:
+        - $$W$$ is the wealth at a given time step,
+        - $$s$$ is the wealth sensitivity parameter which determines how much the investor values wealth relative to the logarithm of wealth.
+
+        Logarithmic utility is useful because it **penalizes riskier outcomes** more heavily, reflecting diminishing satisfaction as wealth increases. This is well-suited for investors who are more sensitive to risk and care more about minimizing losses than achieving outsized gains.
+
+        #### Constant Relative Risk Aversion (CRRA) Utility:
+        The CRRA utility function is widely used for modeling **risk aversion** with a variable degree of risk tolerance. It is represented as:
+
+        $$ U(W) = \\frac{W^{1 - \\gamma}}{1 - \\gamma} $$
+
+        where:
+        - $$W$$ is the wealth at a given time step,
+        - $$\\gamma$$ is the **risk aversion coefficient**. The higher the $$\\gamma$$, the more risk-averse the investor is.
+
+        CRRA utility provides a flexible model for balancing **risk and reward**, with higher risk aversion values placing greater emphasis on protecting wealth from losses, while lower values allow for more aggressive risk-taking in search of higher rewards.
+
+        #### Normalization & Comparison:
+        All utility functions are normalized to account for the investment's expected performance. The normalization compares the **actual wealth** at each time step to the **mean wealth** of the simulation paths up to that point. By using the average wealth as a benchmark, the utility functions provide a more realistic measure of how an investment strategy performs relative to the broader market or simulation.
+
+        Through these utility charts, investors can visualize not only the **expected returns** but also how well the strategy aligns with their **risk tolerance** over time, helping to guide investment decisions that match their preferences.
+        """
+        )
+    col1, col2 = st.columns(2)
+    with col1:
+        utility_type = st.selectbox(
+            "Select Utility Function",
+            ["Logarithmic", "Quadratic", "Constant Relative Risk Aversion"],
+        )
+    with col2:
+        if utility_type != "Logarithmic":
+            plot_log = st.checkbox("Log X-Axis", value=True)
+        else:
+            plot_log = False
+
+    max_loss_tolerance = 0.1
+    wealth_sensitivity = 1.0
+    risk_aversion = 20.0
+    if utility_type == "Quadratic":
+        max_loss_tolerance = st.slider(
+            "Max Loss Tolerance",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.1,
+            step=0.01,
+            help="Maximum loss tolerance for quadratic utility function",
+        )
+        utility_type = "quadratic"
+    elif utility_type == "Logarithmic":
+        wealth_sensitivity = st.slider(
+            "Wealth Sensitivity",
+            min_value=0.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.01,
+            help="Wealth sensitivity for quadratic utility function",
+        )
+        utility_type = "logarithmic"
+    elif utility_type == "Constant Relative Risk Aversion":
+        risk_aversion = st.slider(
+            "Risk Aversion Parameter ($$\\gamma$$)",
+            min_value=0.0,
+            max_value=100.0,
+            value=20.0,
+            step=0.1,
+            help="Risk aversion parameter for constant relative risk aversion utility function",
+        )
+        utility_type = "crra"
+
+    f = mc_simulator.plot_utility_distribution(
+        paths,
+        utility_type,
+        log_scale=plot_log,
+        max_loss_tolerance=max_loss_tolerance,
+        wealth_sensitivity=wealth_sensitivity,
+        risk_aversion=risk_aversion,
+    )
+    st.plotly_chart(f, use_container_width=True)
+
+    f = mc_simulator.plot_utility_scatter(
+        paths,
+        utility_type,
+        log_scale=plot_log,
+        max_loss_tolerance=max_loss_tolerance,
+        wealth_sensitivity=wealth_sensitivity,
+        risk_aversion=risk_aversion,
+    )
+    st.plotly_chart(f, use_container_width=True)

@@ -387,6 +387,19 @@ class MonteCarloSim:
 
         return stock_paths, bond_paths
 
+    def sharpe_ratio(
+        self,
+        returns,
+        risk_free_rate=0.2
+    ):
+        """
+        Calculate the Sharpe ratio for the given returns.
+        :param returns: Array of returns for each simulation
+        :return: Sharpe ratio
+        """
+        excess_returns = returns - risk_free_rate
+        return np.mean(excess_returns) / np.std(excess_returns)
+
     def apply_strategy(self, strategy, stock_prices, bond_prices, **kwargs):
         """
         Apply the given strategy to the simulated paths and return the strategy-dependent investment values and instantaneous returns.
@@ -441,26 +454,99 @@ class MonteCarloSim:
         cvar = terminal_values[terminal_values <= var].mean()
         return cvar
 
-    def quadratic_utility(self, terminal_values, max_loss_tolerance=0.10):
-        """
-        Calculate quadratic utility for the given terminal values, using max loss tolerance as a natural parameter.
-        :param terminal_values: Array of terminal values (wealth)
-        :param max_loss_tolerance: Maximum tolerable loss as a percentage (default 10%)
-        :return: Quadratic utility values
-        """
-        # Translate max loss tolerance to alpha
-        alpha = 2 / max_loss_tolerance
-        return terminal_values - (alpha / 2) * (terminal_values**2)
+    # def quadratic_utility(self, terminal_values, max_loss_tolerance=0.10):
+    #     """
+    #     Calculate quadratic utility for the given terminal values, using max loss tolerance as a natural parameter.
+    #     :param terminal_values: Array of terminal values (wealth)
+    #     :param max_loss_tolerance: Maximum tolerable loss as a percentage (default 10%)
+    #     :return: Quadratic utility values
+    #     """
+    #     # Translate max loss tolerance to alpha
+    #     alpha = 2 / max_loss_tolerance
+    #     return terminal_values - (alpha / 2) * (terminal_values**2)
 
-    def logarithmic_utility(self, terminal_values, wealth_sensitivity=1):
+    # def logarithmic_utility(self, terminal_values, wealth_sensitivity=1):
+    #     """
+    #     Calculate logarithmic utility for the given terminal values, with an adjustable sensitivity factor.
+    #     :param terminal_values: Array of terminal values (wealth)
+    #     :param wealth_sensitivity: Sensitivity factor to adjust the perception of wealth changes (default 1)
+    #     :return: Logarithmic utility values (log(W))
+    #     """
+    #     # Ensure no negative or zero values in terminal values (log is undefined for <= 0)
+    #     return wealth_sensitivity * np.log(np.maximum(terminal_values, 1e-10))
+
+    # Modify the utility functions to support path-dependent utility
+
+    def normalized_quadratic_utility(self, wealth_series, max_loss_tolerance=0.10):
         """
-        Calculate logarithmic utility for the given terminal values, with an adjustable sensitivity factor.
-        :param terminal_values: Array of terminal values (wealth)
+        Calculate normalized mean-variance (quadratic) utility for the given wealth series,
+        using the mean of wealth values at each time step for normalization and adjusting
+        based on max loss tolerance.
+        :param wealth_series: Array of wealth values over time (shape: [time, simulations])
+        :param max_loss_tolerance: Maximum tolerable loss as a percentage (default 10%)
+        :return: Normalized quadratic utility values (shape: [time, simulations])
+        """
+        # Calculate the mean wealth at each time step across all simulations
+        mean_wealth_at_time = np.mean(wealth_series, axis=1)
+
+        # Translate max loss tolerance to a risk aversion coefficient (alpha)
+        alpha = 2 / max_loss_tolerance
+
+        # Compute expected return (mean of the wealth series) normalized by mean wealth at time
+        expected_return = np.mean(wealth_series, axis=0) - mean_wealth_at_time.reshape(
+            -1, 1
+        )
+
+        # Compute variance (risk) of the wealth series
+        variance = np.var(wealth_series, axis=0)
+
+        # Mean-variance utility function with max_loss_tolerance translated to alpha
+        utility = expected_return - (0.5 * alpha * variance)
+
+        return utility
+
+    def normalized_logarithmic_utility(
+        self, wealth_series, wealth_sensitivity=1
+    ):
+        """
+        Calculate normalized logarithmic utility for the given wealth series over time,
+        compared to the mean of the simulated wealth paths at each time step.
+        :param wealth_series: Array of wealth values over time (shape: [time, simulations])
+        :param time_period_months: The duration of the investment in months.
         :param wealth_sensitivity: Sensitivity factor to adjust the perception of wealth changes (default 1)
-        :return: Logarithmic utility values (log(W))
+        :return: Normalized logarithmic utility values (shape: [time, simulations])
         """
+        # Calculate the mean wealth at each time step across all simulations
+        mean_wealth_at_time = np.mean(wealth_series, axis=1)
+
         # Ensure no negative or zero values in terminal values (log is undefined for <= 0)
-        return wealth_sensitivity * np.log(np.maximum(terminal_values, 1e-10))
+        wealth_diff = wealth_series - mean_wealth_at_time.reshape(-1, 1)
+
+        utility = wealth_sensitivity * symlog_transform(wealth_diff)
+
+        return utility
+
+    def normalized_crra_utility(self, wealth_series, risk_aversion=1):
+        """
+        Calculate normalized Constant Relative Risk Aversion (CRRA) utility for the given wealth series over time,
+        using the mean of current wealths up to each point for normalization.
+        :param wealth_series: Array of wealth values over time (shape: [time, simulations])
+        :param risk_aversion: The risk aversion coefficient (gamma)
+        :return: Normalized CRRA utility values (shape: [time, simulations])
+        """
+        # Calculate the running mean of wealth over time
+        mean_wealth_at_time = np.mean(wealth_series, axis=1)
+
+        if risk_aversion == 1:
+            # Logarithmic utility for CRRA with gamma = 1, normalized by the running mean
+            wealth_diff = wealth_series - mean_wealth_at_time.reshape(-1, 1)
+            utility = symlog_transform(wealth_diff)
+        else:
+            # CRRA utility function, normalized by the running mean
+            wealth_diff = wealth_series / mean_wealth_at_time.reshape(-1, 1)
+            utility = (wealth_diff**(1 - risk_aversion)) / (1 - risk_aversion)
+
+        return utility
 
     def expected_utility(self, utility_values):
         """
@@ -958,6 +1044,160 @@ class MonteCarloSim:
 
         return fig
 
+    def plot_utility_distribution(self, paths, utility_type="quadratic", log_scale=False, **kwargs):
+        """
+        Plot the distribution of utilities at the final time step (terminal utilities).
+        """
+        if utility_type == "quadratic":
+            terminal_utilities = self.normalized_quadratic_utility(paths, max_loss_tolerance=kwargs.get("max_loss_tolerance", 0.1))
+            if log_scale:
+                transformed_utilities = symlog_transform(terminal_utilities, 1e3)
+            else:
+                transformed_utilities = terminal_utilities
+        elif utility_type == "logarithmic":
+            terminal_utilities = self.normalized_logarithmic_utility(paths, wealth_sensitivity=kwargs.get("wealth_sensitivity", 1))
+            transformed_utilities = terminal_utilities  # No transformation needed for log
+        elif utility_type == "crra":
+            terminal_utilities = self.normalized_crra_utility(paths, risk_aversion=kwargs.get("risk_aversion", 1))
+            if log_scale:
+                transformed_utilities = symlog_transform(terminal_utilities, 1e3)
+            else:
+                transformed_utilities = terminal_utilities
+
+        # Compute the mean of utilities across simulations
+        terminal_utilities = np.mean(terminal_utilities, axis=0)
+        transformed_utilities = np.mean(transformed_utilities, axis=0)
+
+        # Histogram of the transformed utilities
+        hist, bin_edges = np.histogram(transformed_utilities, bins=50)
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        # Create a plotly figure
+        fig = go.Figure()
+
+        # Add the histogram for the transformed utilities
+        fig.add_trace(go.Bar(x=bin_centers, y=hist, name="Utilities", marker_color="gray"))
+
+        # For quadratic utility, manually set the x-ticks to reflect the original terminal values
+        if utility_type == "quadratic":
+            # Generate x-ticks corresponding to the original terminal values
+            original_ticks = np.linspace(
+                terminal_utilities.min(), terminal_utilities.max(), len(bin_centers)
+            )
+
+            # Choose fewer tick values by selecting every nth tick
+            step_size = len(original_ticks) // 10  # Adjust this to set the number of ticks
+            sparse_ticks = original_ticks[::step_size]
+            sparse_tickvals = bin_centers[::step_size]
+
+            fig.update_layout(
+                title="Distribution of Average Path Utilities",
+                xaxis_title="Utility",
+                yaxis_title="Frequency",
+                template="plotly_dark",
+                xaxis=dict(
+                    tickmode="array",
+                    tickvals=sparse_tickvals,  # Fewer tick values
+                    ticktext=[
+                        f"{x:.2e}" for x in sparse_ticks
+                    ],  # Use scientific notation for the ticks
+                    tickformat="e",  # Enable scientific formatting
+                ),
+            )
+        else:
+            fig.update_layout(
+                title="Distribution of Average Path Utilities",
+                xaxis_title="Utility",
+                yaxis_title="Frequency",
+                template="plotly_dark",
+            )
+
+            if utility_type == "ccra":
+                fig.update_layout(
+                    yaxis_type="log"
+                )
+
+        return fig
+
+
+    def plot_utility_scatter(
+        self, paths, utility_type="quadratic", log_scale=False, **kwargs
+    ):
+        """
+        Plot a scatter plot of utilities against terminal wealth, colored by the variance (risk).
+        :param paths: Simulated wealth paths
+        :param utility_type: Type of utility function to apply ("quadratic", "logarithmic", "crra")
+        :param log_scale: Whether to apply log scaling to the x-axis
+        :param kwargs: Additional parameters for utility functions
+        """
+        # Calculate terminal wealth
+        terminal_wealth = paths[-1, :]  # Get terminal wealth at the last time step
+
+        # Choose utility function based on the selected utility type
+        if utility_type == "quadratic":
+            utilities = self.normalized_quadratic_utility(
+                paths, max_loss_tolerance=kwargs.get("max_loss_tolerance", 0.1)
+            )
+            if log_scale:
+                transformed_utilities = symlog_transform(utilities, 1e3)
+            else:
+                transformed_utilities = utilities
+
+        elif utility_type == "logarithmic":
+            utilities = self.normalized_logarithmic_utility(
+                paths, wealth_sensitivity=kwargs.get("wealth_sensitivity", 1)
+            )
+            transformed_utilities = utilities  # No transformation needed for log
+
+        elif utility_type == "crra":
+            utilities = self.normalized_crra_utility(
+                paths, risk_aversion=kwargs.get("risk_aversion", 1)
+            )
+            if log_scale:
+                transformed_utilities = symlog_transform(utilities, 1e3)
+            else:
+                transformed_utilities = utilities
+
+        # Compute variance (risk) for each path over time
+        path_variances = np.var(paths, axis=0)  # Variance of wealth over time
+
+        # Create a scatter plot of terminal wealth vs utility
+        fig = go.Figure()
+
+        # Add the scatter plot, coloring by variance (risk)
+        ys = np.mean(utilities, axis=0)
+        if utility_type == "crra":
+            ys = symlog_transform(ys)
+        fig.add_trace(
+            go.Scatter(
+                x=terminal_wealth,
+                y=ys,
+                mode="markers",
+                marker=dict(
+                    size=6,  # Size of scatter points
+                    color=path_variances,  # Color by variance (risk)
+                    colorscale="Viridis",  # Color scale for risk
+                    showscale=True,  # Show color bar
+                    colorbar=dict(title="Risk (Variance)"),  # Label for color bar
+                ),
+                name="Utilities",
+            )
+        )
+
+        # Add axis titles and formatting
+        fig.update_layout(
+            title=f"Scatter of Utilities vs Terminal Wealth ({utility_type.capitalize()} Utility, Color: Risk)",
+            xaxis_title="Terminal Wealth",
+            yaxis_title="Utility",
+            template="plotly_dark",
+        )
+
+        # Apply log scaling to x-axis if specified
+        if log_scale:
+            fig.update_layout(xaxis_type="log")
+
+        return fig
+
 
 # principal = 35880.34  # Initial investment
 # loan_principal = 35880.34  # Loan principal
@@ -1047,4 +1287,3 @@ class MonteCarloSim:
 # mc_simulator.plot_utility_comparison(
 #     terminal_values,
 # ).show()
-
